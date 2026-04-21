@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Plane Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 100%;
+            height: 100vh;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        #gameContainer {
+            width: 100%;
+            height: 100%;
+        }
+
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 18px;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 20px;
+            border-radius: 10px;
+            min-width: 250px;
+        }
+
+        #score {
+            margin-bottom: 10px;
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        #altitude {
+            margin-bottom: 10px;
+        }
+
+        #speed {
+            margin-bottom: 10px;
+        }
+
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: white;
+            font-size: 14px;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 20px;
+            border-radius: 10px;
+        }
+
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.95);
+            color: white;
+            padding: 40px;
+            border-radius: 20px;
+            text-align: center;
+            z-index: 100;
+            display: none;
+        }
+
+        #gameOver h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+
+        #gameOver p {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        #gameOver button {
+            margin-top: 20px;
+            padding: 15px 30px;
+            font-size: 18px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        #gameOver button:hover {
+            background: #764ba2;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer"></div>
+    
+    <div id="hud">
+        <div id="score">Score: 0</div>
+        <div id="altitude">Altitude: 0 m</div>
+        <div id="speed">Speed: 0 km/h</div>
+    </div>
+
+    <div id="controls">
+        <strong>Controls:</strong><br>
+        Arrow Keys or WASD - Move<br>
+        Space - Boost<br>
+        Mouse - Look Around
+    </div>
+
+    <div id="gameOver">
+        <h1>Game Over!</h1>
+        <p id="finalScore">Final Score: 0</p>
+        <button onclick="location.reload()">Play Again</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB);
+        scene.fog = new THREE.Fog(0x87CEEB, 500, 2000);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+        camera.position.set(0, 20, 50);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.getElementById('gameContainer').appendChild(renderer.domElement);
+
+        // Lighting
+        const sunlight = new THREE.DirectionalLight(0xffffff, 1);
+        sunlight.position.set(100, 100, 100);
+        sunlight.castShadow = true;
+        sunlight.shadow.camera.left = -500;
+        sunlight.shadow.camera.right = 500;
+        sunlight.shadow.camera.top = 500;
+        sunlight.shadow.camera.bottom = -500;
+        scene.add(sunlight);
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+
+        // Plane
+        const planeGeometry = new THREE.BoxGeometry(2, 1, 8);
+        const planeMaterial = new THREE.MeshStandardMaterial({ color: 0xff6b6b });
+        const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+        plane.castShadow = true;
+        plane.receiveShadow = true;
+        plane.position.y = 50;
+        scene.add(plane);
+
+        // Wings
+        const wingGeometry = new THREE.BoxGeometry(12, 0.3, 2);
+        const wingMaterial = new THREE.MeshStandardMaterial({ color: 0xff8787 });
+        const wings = new THREE.Mesh(wingGeometry, wingMaterial);
+        wings.castShadow = true;
+        wings.receiveShadow = true;
+        wings.position.copy(plane.position);
+        scene.add(wings);
+
+        // Ground
+        const groundGeometry = new THREE.PlaneGeometry(1000, 1000);
+        const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x2ecc71 });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = 0;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Game variables
+        let gameActive = true;
+        let score = 0;
+        let velocity = { x: 0, y: 0, z: 0 };
+        let rotation = { x: 0, y: 0, z: 0 };
+        const keys = {};
+        const obstacles = [];
+        let obstacleCounter = 0;
+
+        // Input handling
+        document.addEventListener('keydown', (e) => keys[e.key.toLowerCase()] = true);
+        document.addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
+
+        // Obstacle creation
+        function createObstacle() {
+            const obstacleGeometry = new THREE.BoxGeometry(8, 8, 8);
+            const obstacleMaterial = new THREE.MeshStandardMaterial({ 
+                color: Math.random() * 0xffffff,
+                metalness: 0.7,
+                roughness: 0.2
+            });
+            const obstacle = new THREE.Mesh(obstacleGeometry, obstacleMaterial);
+            obstacle.castShadow = true;
+            obstacle.receiveShadow = true;
+            obstacle.position.x = (Math.random() - 0.5) * 200;
+            obstacle.position.y = Math.random() * 100 + 30;
+            obstacle.position.z = plane.position.z - 500;
+            obstacle.rotation.x = Math.random() * Math.PI;
+            obstacle.rotation.y = Math.random() * Math.PI;
+            obstacle.rotation.z = Math.random() * Math.PI;
+            scene.add(obstacle);
+            obstacles.push({
+                mesh: obstacle,
+                velocity: Math.random() * 5 + 2
+            });
+        }
+
+        // Collision detection
+        function checkCollision(pos1, size1, pos2, size2) {
+            return (
+                Math.abs(pos1.x - pos2.x) < size1.x / 2 + size2.x / 2 &&
+                Math.abs(pos1.y - pos2.y) < size1.y / 2 + size2.y / 2 &&
+                Math.abs(pos1.z - pos2.z) < size1.z / 2 + size2.z / 2
+            );
+        }
+
+        // Game update
+        function update() {
+            if (!gameActive) return;
+
+            // Plane movement
+            const moveSpeed = 2;
+            const rotationSpeed = 0.05;
+            const boostMultiplier = keys[' '] ? 1.5 : 1;
+
+            if (keys['arrowup'] || keys['w']) {
+                velocity.y += moveSpeed * boostMultiplier;
+            }
+            if (keys['arrowdown'] || keys['s']) {
+                velocity.y -= moveSpeed * boostMultiplier;
+            }
+            if (keys['arrowleft'] || keys['a']) {
+                velocity.x -= moveSpeed * boostMultiplier;
+                rotation.z = 0.3;
+            } else if (keys['arrowright'] || keys['d']) {
+                velocity.x += moveSpeed * boostMultiplier;
+                rotation.z = -0.3;
+            } else {
+                rotation.z *= 0.95;
+            }
+
+            // Apply physics
+            velocity.y *= 0.98;
+            velocity.x *= 0.95;
+            plane.position.add(velocity);
+            plane.rotation.z = rotation.z;
+
+            // Ground collision
+            if (plane.position.y < 5) {
+                endGame();
+                return;
+            }
+
+            // Altitude limit
+            if (plane.position.y > 200) {
+                plane.position.y = 200;
+                velocity.y = 0;
+            }
+
+            // Keep plane in bounds
+            if (plane.position.x < -300) plane.position.x = -300;
+            if (plane.position.x > 300) plane.position.x = 300;
+
+            // Update wings position
+            wings.position.copy(plane.position);
+
+            // Update obstacles
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                const obs = obstacles[i];
+                obs.mesh.position.z += obs.velocity;
+                obs.mesh.rotation.x += 0.02;
+                obs.mesh.rotation.y += 0.03;
+
+                // Check collision
+                if (checkCollision(
+                    plane.position,
+                    { x: 2, y: 1, z: 8 },
+                    obs.mesh.position,
+                    { x: 8, y: 8, z: 8 }
+                )) {
+                    endGame();
+                    return;
+                }
+
+                // Remove if too far behind
+                if (obs.mesh.position.z > plane.position.z + 100) {
+                    scene.remove(obs.mesh);
+                    obstacles.splice(i, 1);
+                    score += 10;
+                }
+            }
+
+            // Generate new obstacles
+            obstacleCounter++;
+            if (obstacleCounter % 40 === 0) {
+                createObstacle();
+            }
+
+            // Update camera
+            camera.position.x = plane.position.x * 0.3;
+            camera.position.y = plane.position.y + 20;
+            camera.position.z = plane.position.z + 50;
+            camera.lookAt(plane.position);
+
+            // Update HUD
+            document.getElementById('score').textContent = `Score: ${score}`;
+            document.getElementById('altitude').textContent = `Altitude: ${Math.floor(plane.position.y)} m`;
+            document.getElementById('speed').textContent = `Speed: ${Math.floor(Math.sqrt(velocity.x ** 2 + velocity.y ** 2) * 10)} km/h`;
+        }
+
+        function endGame() {
+            gameActive = false;
+            document.getElementById('gameOver').style.display = 'block';
+            document.getElementById('finalScore').textContent = `Final Score: ${score}`;
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            update();
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // Start game
+        createObstacle();
+    </script>
+</body>
+</html>
